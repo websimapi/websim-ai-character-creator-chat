@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Character Chat</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .setup-section, .chat-section {
+            margin-bottom: 20px;
+        }
+        
+        #character-form {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #character-description {
+            height: 100px;
+            margin-bottom: 10px;
+            padding: 10px;
+        }
+        
+        button {
+            padding: 10px 15px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background-color: #3367d6;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        #character-image {
+            width: 200px;
+            height: 200px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin: 20px auto;
+            display: block;
+            border: 3px solid #4285f4;
+        }
+        
+        #chat-container {
+            display: none;
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .message {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        
+        .user-message {
+            background-color: #e2f1ff;
+            text-align: right;
+        }
+        
+        .bot-message {
+            background-color: #f0f0f0;
+        }
+        
+        #mic-button {
+            display: none;
+            margin: 20px auto;
+            padding: 15px;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            font-size: 24px;
+            line-height: 24px;
+        }
+        
+        #mic-button.listening {
+            background-color: #ff5c5c;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+        
+        #status {
+            text-align: center;
+            font-style: italic;
+            color: #666;
+            margin: 10px 0;
+        }
+        
+        .hide {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Character Creator & Chat</h1>
+        
+        <div class="setup-section" id="setup-section">
+            <h2>Create Your AI Character</h2>
+            <form id="character-form">
+                <label for="character-description">Describe your character:</label>
+                <textarea id="character-description" placeholder="Example: A friendly space alien who speaks in rhymes and loves human culture" required></textarea>
+                <button type="submit" id="create-button">Create Character</button>
+            </form>
+            <div id="creation-status" class="hide">Creating your character...</div>
+        </div>
+        
+        <img id="character-image" class="hide" alt="Character image">
+        
+        <div id="character-info" class="hide">
+            <h2 id="character-name"></h2>
+            <p id="character-bio"></p>
+        </div>
+        
+        <button id="start-chat" class="hide">Start Talking!</button>
+        
+        <div class="chat-section hide" id="chat-section">
+            <h2>Chat with <span id="chat-character-name"></span></h2>
+            <div id="chat-container"></div>
+            <button id="mic-button">🎤</button>
+            <div id="status"></div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let characterDetails = null;
+        let conversationHistory = [];
+        let recognition = null;
+        let isListening = false;
+        let characterVoice = "en-male"; // Default voice
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initialize the form submission
+            document.getElementById('character-form').addEventListener('submit', handleCharacterCreation);
+            
+            // Start chat button
+            document.getElementById('start-chat').addEventListener('click', startChat);
+            
+            // Mic button
+            document.getElementById('mic-button').addEventListener('click', toggleMicrophone);
+            
+            // Initialize speech recognition if available
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+                recognition.continuous = false;
+                recognition.interimResults = false;
+                
+                recognition.onresult = handleSpeechResult;
+                recognition.onend = () => {
+                    // If we're in listening mode but recognition ended, restart it
+                    if (isListening) {
+                        updateStatus("No speech detected. Click the mic to try again.");
+                        document.getElementById('mic-button').classList.remove('listening');
+                        isListening = false;
+                    }
+                };
+                
+                recognition.onerror = (event) => {
+                    updateStatus(`Speech recognition error: ${event.error}`);
+                    document.getElementById('mic-button').classList.remove('listening');
+                    isListening = false;
+                };
+            } else {
+                alert("Speech recognition is not supported in your browser. Please try Chrome, Edge, or Safari.");
+            }
+        });
+        
+        async function handleCharacterCreation(e) {
+            e.preventDefault();
+            
+            const description = document.getElementById('character-description').value.trim();
+            if (!description) {
+                alert("Please describe your character");
+                return;
+            }
+            
+            document.getElementById('create-button').disabled = true;
+            document.getElementById('creation-status').classList.remove('hide');
+            
+            try {
+                // Step 1: Elaborate the character with details using LLM
+                characterDetails = await elaborateCharacter(description);
+                
+                // Step 2: Generate an image for the character
+                const imageUrl = await generateCharacterImage(characterDetails.appearance);
+                
+                // Display character details
+                document.getElementById('character-name').textContent = characterDetails.name;
+                document.getElementById('character-bio').textContent = characterDetails.bio;
+                document.getElementById('chat-character-name').textContent = characterDetails.name;
+                
+                // Display the character image
+                const characterImage = document.getElementById('character-image');
+                characterImage.src = imageUrl;
+                characterImage.classList.remove('hide');
+                
+                // Show the character info and start button
+                document.getElementById('character-info').classList.remove('hide');
+                document.getElementById('start-chat').classList.remove('hide');
+                
+                // Hide the setup section
+                document.getElementById('creation-status').classList.add('hide');
+                document.getElementById('setup-section').classList.add('hide');
+                
+                // Set appropriate voice based on character's gender
+                if (characterDetails.gender.toLowerCase().includes('female')) {
+                    characterVoice = "en-female";
+                } else {
+                    characterVoice = "en-male";
+                }
+                
+                // Initialize conversation history with system message
+                conversationHistory = [{
+                    role: "system",
+                    content: `You are ${characterDetails.name}, ${characterDetails.bio} You always stay in character and respond as ${characterDetails.name} would. Your personality is ${characterDetails.personality}`
+                }];
+                
+            } catch (error) {
+                console.error("Error creating character:", error);
+                alert("An error occurred while creating your character. Please try again.");
+                document.getElementById('create-button').disabled = false;
+                document.getElementById('creation-status').classList.add('hide');
+            }
+        }
+        
+        async function elaborateCharacter(baseDescription) {
+            const completion = await websim.chat.completions.create({
+                messages: [
+                    {
+                        role: "system",
+                        content: `You are an expert character creator. Given a basic description, create a detailed character profile. 
+                        Respond directly with JSON, following this schema:
+                        {
+                            "name": "Character's name",
+                            "bio": "Brief character biography/backstory (2-3 sentences)",
+                            "personality": "Detailed description of personality traits",
+                            "speaking_style": "How the character speaks (dialect, catchphrases, etc.)",
+                            "appearance": "Detailed physical appearance for image generation",
+                            "gender": "Character gender (for voice selection)"
+                        }`
+                    },
+                    {
+                        role: "user",
+                        content: baseDescription
+                    }
+                ],
+                json: true
+            });
+            
+            return JSON.parse(completion.content);
+        }
+        
+        async function generateCharacterImage(appearance) {
+            const result = await websim.imageGen({
+                prompt: `Portrait of ${appearance}. High detail character portrait, detailed facial features, expressive.`,
+                aspect_ratio: "1:1"
+            });
+            
+            return result.url;
+        }
+        
+        function startChat() {
+            document.getElementById('chat-section').classList.remove('hide');
+            document.getElementById('mic-button').style.display = 'block';
+            document.getElementById('start-chat').classList.add('hide');
+            
+            // Add initial greeting from the character
+            addBotMessage(`Hello there! I'm ${characterDetails.name}. ${getRandomGreeting()}`);
+            
+            // Speak the greeting
+            speakText(`Hello there! I'm ${characterDetails.name}. ${getRandomGreeting()}`);
+        }
+        
+        function getRandomGreeting() {
+            const greetings = [
+                "I'm so excited to chat with you!",
+                "What would you like to talk about today?",
+                "It's wonderful to meet you!",
+                "I've been looking forward to our conversation.",
+                "How are you doing today?"
+            ];
+            return greetings[Math.floor(Math.random() * greetings.length)];
+        }
+        
+        function toggleMicrophone() {
+            if (isListening) {
+                stopListening();
+            } else {
+                startListening();
+            }
+        }
+        
+        function startListening() {
+            if (!recognition) return;
+            
+            try {
+                recognition.start();
+                isListening = true;
+                document.getElementById('mic-button').classList.add('listening');
+                updateStatus("Listening...");
+            } catch (error) {
+                console.error("Error starting speech recognition:", error);
+                updateStatus("Error starting speech recognition");
+            }
+        }
+        
+        function stopListening() {
+            if (!recognition) return;
+            
+            try {
+                recognition.stop();
+                isListening = false;
+                document.getElementById('mic-button').classList.remove('listening');
+                updateStatus("");
+            } catch (error) {
+                console.error("Error stopping speech recognition:", error);
+            }
+        }
+        
+        async function handleSpeechResult(event) {
+            const speechText = event.results[0][0].transcript;
+            if (!speechText.trim()) return;
+            
+            // Stop listening while processing
+            stopListening();
+            
+            // Add user message to chat
+            addUserMessage(speechText);
+            
+            // Add to conversation history
+            conversationHistory.push({
+                role: "user",
+                content: speechText
+            });
+            
+            // Only keep last 10 messages for context
+            if (conversationHistory.length > 11) {  // 1 system message + 10 conversation messages
+                conversationHistory = [
+                    conversationHistory[0],  // Keep the system message
+                    ...conversationHistory.slice(-10)  // Keep last 10 conversation messages
+                ];
+            }
+            
+            updateStatus("Thinking...");
+            
+            try {
+                // Get response from LLM
+                const completion = await websim.chat.completions.create({
+                    messages: conversationHistory
+                });
+                
+                const response = completion.content;
+                
+                // Add bot response to chat
+                addBotMessage(response);
+                
+                // Add to conversation history
+                conversationHistory.push({
+                    role: "assistant",
+                    content: response
+                });
+                
+                // Convert to speech and play
+                updateStatus("Speaking...");
+                await speakText(response);
+                
+                // Resume listening after speaking
+                updateStatus("");
+                startListening();
+                
+            } catch (error) {
+                console.error("Error getting AI response:", error);
+                updateStatus("Error getting response. Please try again.");
+            }
+        }
+        
+        async function speakText(text) {
+            try {
+                const result = await websim.textToSpeech({
+                    text: text,
+                    voice: characterVoice
+                });
+                
+                const audio = new Audio(result.url);
+                
+                return new Promise((resolve) => {
+                    audio.onended = resolve;
+                    audio.play();
+                });
+            } catch (error) {
+                console.error("Text-to-speech error:", error);
+                updateStatus("Error converting text to speech");
+                return Promise.resolve(); // Continue even if speech fails
+            }
+        }
+        
+        function addUserMessage(text) {
+            const chatContainer = document.getElementById('chat-container');
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', 'user-message');
+            messageElement.textContent = text;
+            chatContainer.appendChild(messageElement);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        function addBotMessage(text) {
+            const chatContainer = document.getElementById('chat-container');
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', 'bot-message');
+            messageElement.textContent = text;
+            chatContainer.appendChild(messageElement);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+        
+        function updateStatus(message) {
+            document.getElementById('status').textContent = message;
+        }
+    </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
+
