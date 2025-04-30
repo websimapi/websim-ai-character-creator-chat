@@ -162,6 +162,9 @@
         let recognition = null;
         let isListening = false;
         let characterVoice = "en-male"; // Default voice
+        let speechTimeout = null;
+        let finalTranscript = '';
+        let isSpeaking = false;
         
         document.addEventListener('DOMContentLoaded', () => {
             // Initialize the form submission
@@ -320,7 +323,9 @@
             if (isListening) {
                 stopListening();
             } else {
-                startListening();
+                if (!isSpeaking) {
+                    startListening();
+                }
             }
         }
         
@@ -330,6 +335,7 @@
             try {
                 recognition.start();
                 isListening = true;
+                finalTranscript = '';
                 document.getElementById('mic-button').classList.add('listening');
                 updateStatus("Listening...");
             } catch (error) {
@@ -352,60 +358,76 @@
         }
         
         async function handleSpeechResult(event) {
-            const speechText = event.results[0][0].transcript;
-            if (!speechText.trim()) return;
-            
-            // Stop listening while processing
-            stopListening();
-            
-            // Add user message to chat
-            addUserMessage(speechText);
-            
-            // Add to conversation history
-            conversationHistory.push({
-                role: "user",
-                content: speechText
-            });
-            
-            // Only keep last 10 messages for context
-            if (conversationHistory.length > 11) {  // 1 system message + 10 conversation messages
-                conversationHistory = [
-                    conversationHistory[0],  // Keep the system message
-                    ...conversationHistory.slice(-10)  // Keep last 10 conversation messages
-                ];
+            // Clear any existing timeout
+            if (speechTimeout) {
+                clearTimeout(speechTimeout);
             }
             
-            updateStatus("Thinking...");
+            const transcript = Array.from(event.results)
+                .map(result => result[0].transcript)
+                .join('');
+                
+            finalTranscript = transcript;
+            updateStatus("Listening... (Pause to send)");
             
-            try {
-                // Get response from LLM
-                const completion = await websim.chat.completions.create({
-                    messages: conversationHistory
-                });
+            // Set a timeout to detect when the user has stopped speaking
+            speechTimeout = setTimeout(async () => {
+                if (!finalTranscript.trim()) return;
                 
-                const response = completion.content;
+                // Stop listening while processing
+                stopListening();
                 
-                // Add bot response to chat
-                addBotMessage(response);
+                // Add user message to chat
+                addUserMessage(finalTranscript);
                 
                 // Add to conversation history
                 conversationHistory.push({
-                    role: "assistant",
-                    content: response
+                    role: "user",
+                    content: finalTranscript
                 });
                 
-                // Convert to speech and play
-                updateStatus("Speaking...");
-                await speakText(response);
+                // Only keep last 10 messages for context
+                if (conversationHistory.length > 11) {  // 1 system message + 10 conversation messages
+                    conversationHistory = [
+                        conversationHistory[0],  // Keep the system message
+                        ...conversationHistory.slice(-10)  // Keep last 10 conversation messages
+                    ];
+                }
                 
-                // Resume listening after speaking
-                updateStatus("");
-                startListening();
+                updateStatus("Thinking...");
                 
-            } catch (error) {
-                console.error("Error getting AI response:", error);
-                updateStatus("Error getting response. Please try again.");
-            }
+                try {
+                    // Get response from LLM
+                    const completion = await websim.chat.completions.create({
+                        messages: conversationHistory
+                    });
+                    
+                    const response = completion.content;
+                    
+                    // Add bot response to chat
+                    addBotMessage(response);
+                    
+                    // Add to conversation history
+                    conversationHistory.push({
+                        role: "assistant",
+                        content: response
+                    });
+                    
+                    // Convert to speech and play
+                    updateStatus("Speaking...");
+                    isSpeaking = true;
+                    await speakText(response);
+                    isSpeaking = false;
+                    
+                    // Resume listening after speaking
+                    updateStatus("");
+                    startListening();
+                    
+                } catch (error) {
+                    console.error("Error getting AI response:", error);
+                    updateStatus("Error getting response. Please try again.");
+                }
+            }, 2000); // Wait 2 seconds of silence before sending
         }
         
         async function speakText(text) {
@@ -418,12 +440,16 @@
                 const audio = new Audio(result.url);
                 
                 return new Promise((resolve) => {
-                    audio.onended = resolve;
+                    audio.onended = () => {
+                        isSpeaking = false;
+                        resolve();
+                    };
                     audio.play();
                 });
             } catch (error) {
                 console.error("Text-to-speech error:", error);
                 updateStatus("Error converting text to speech");
+                isSpeaking = false;
                 return Promise.resolve(); // Continue even if speech fails
             }
         }
@@ -453,4 +479,3 @@
 <script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
-
